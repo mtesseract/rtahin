@@ -9,14 +9,14 @@ use std::{
 };
 
 use base64;
+use clap::{App, SubCommand};
 use dirs::home_dir;
+use hex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sodiumoxide::crypto::{pwhash::scryptsalsa208sha256, secretbox};
 
-use hex;
-use sha2::{Digest, Sha256};
-
-use dialoguer::PasswordInput;
+use dialoguer::{Input, PasswordInput};
 
 const RTAHIN_DIRECTORY: &str = ".rtahin";
 const RTAHIN_MPC_FILE: &str = "mpc";
@@ -93,6 +93,20 @@ impl MasterPassword {
         let password = &b64_encoded_result[0..20];
         Password(password.to_string())
     }
+
+    fn from_user() -> Result<MasterPassword, TahinError> {
+        Ok(MasterPassword(
+            PasswordInput::new()
+                .with_prompt("Master Password")
+                .interact()?,
+        ))
+    }
+
+    fn from_user_cleartext() -> Result<MasterPassword, TahinError> {
+        Ok(MasterPassword(
+            Input::new().with_prompt("Master Password").interact()?,
+        ))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -129,7 +143,7 @@ struct Service {
 
 impl Service {
     pub fn query(mpc: &MasterPasswordContainer) -> Result<Service, TahinError> {
-        use dialoguer::{Confirmation, Input};
+        use dialoguer::Confirmation;
 
         let service_id = Input::<String>::new().with_prompt("Service").interact()?;
         let service = Service {
@@ -414,14 +428,9 @@ impl PasswordHandler {
     }
 }
 
-fn main() -> Result<(), TahinError> {
+fn default_workflow() -> Result<(), TahinError> {
     let opt_handler = PasswordHandler::from_env()?;
-    let mp = MasterPassword(
-        PasswordInput::new()
-            .with_prompt("Master Password")
-            .interact()
-            .unwrap(),
-    );
+    let mp = MasterPassword::from_user()?;
     let mut container = match MasterPasswordContainer::load(&mp) {
         Ok(container) => container,
         Err(err) => {
@@ -443,4 +452,24 @@ fn main() -> Result<(), TahinError> {
     }
 
     Ok(())
+}
+
+fn register_new_master_password() -> Result<(), TahinError> {
+    let mp = MasterPassword::from_user_cleartext()?;
+    let mpc = MasterPasswordContainer::new(mp);
+    mpc.persist()
+}
+
+fn main() -> Result<(), TahinError> {
+    let matches = App::new("RTahin")
+        .version("1.0")
+        .author("Moritz Clasmeier <mtesseract@silverratio.net>")
+        .about("Generates Service Passwords")
+        .subcommand(SubCommand::with_name("register").about("Register new Master Password"))
+        .get_matches();
+    if let Some(_) = matches.subcommand_matches("register") {
+        register_new_master_password()
+    } else {
+        default_workflow()
+    }
 }
