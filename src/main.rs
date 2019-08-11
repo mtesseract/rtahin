@@ -456,6 +456,20 @@ fn default_workflow() -> Result<(), TahinError> {
 
 fn register_new_master_password() -> Result<(), TahinError> {
     let mp = MasterPassword::from_user_cleartext()?;
+    match MasterPasswordContainer::load(&mp) {
+        Ok(_mpc) => {
+            println!("Password already registered");
+            process::exit(0);
+        }
+        Err(TahinError::ContainerNotFound) => {}
+        Err(err) => {
+            println!(
+                "Error occured while checking for container existence: {}",
+                err
+            );
+            process::exit(1);
+        }
+    }
     let mpc = MasterPasswordContainer::new(mp);
     mpc.persist()
 }
