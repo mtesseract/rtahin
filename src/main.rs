@@ -1,22 +1,19 @@
-use std::{
-    collections::HashSet,
-    convert::From,
-    fmt::{self, Display},
-    fs,
-    io::{self, Write},
-    path::PathBuf,
-    process::{self, Stdio},
-};
+use std::collections::HashSet;
+use std::convert::From;
+use std::fmt::{self, Display};
+use std::fs;
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::process::{self, Stdio};
 
 use base64;
-use clap::{App, SubCommand};
+use clap::{App, Arg, ArgMatches, SubCommand};
+use dialoguer::{Input, PasswordInput};
 use dirs::home_dir;
 use hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sodiumoxide::crypto::{pwhash::scryptsalsa208sha256, secretbox};
-
-use dialoguer::{Input, PasswordInput};
 
 const RTAHIN_DIRECTORY: &str = ".rtahin";
 const RTAHIN_MPC_FILE: &str = "mpc";
@@ -428,9 +425,13 @@ impl PasswordHandler {
     }
 }
 
-fn default_workflow() -> Result<(), TahinError> {
+fn default_workflow(top_args: &ArgMatches<'_>) -> Result<(), TahinError> {
     let opt_handler = PasswordHandler::from_env()?;
-    let mp = MasterPassword::from_user()?;
+    let mp = if top_args.is_present(TopArguments::ShowPassword) {
+        MasterPassword::from_user_cleartext()?
+    } else {
+        MasterPassword::from_user()?
+    };
     let mut container = match MasterPasswordContainer::load(&mp) {
         Ok(container) => container,
         Err(err) => {
@@ -447,15 +448,38 @@ fn default_workflow() -> Result<(), TahinError> {
     let password = mp.derive_password(&service);
 
     match opt_handler {
-        Some(handler) => handler.send(&password)?,
+        Some(handler) => {
+            handler.send(&password)?;
+            println!("OK");
+        }
         None => println!("{}", password.0),
     }
 
     Ok(())
 }
 
-fn register_new_master_password() -> Result<(), TahinError> {
-    let mp = MasterPassword::from_user_cleartext()?;
+enum TopArguments {
+    ShowPassword,
+}
+
+impl AsRef<str> for TopArguments {
+    fn as_ref(&self) -> &str {
+        use TopArguments::*;
+        match self {
+            ShowPassword => &"show-password",
+        }
+    }
+}
+
+fn register_new_master_password(
+    top_args: &ArgMatches<'_>,
+    _args: &ArgMatches<'_>,
+) -> Result<(), TahinError> {
+    let mp = if top_args.is_present(TopArguments::ShowPassword) {
+        MasterPassword::from_user_cleartext()?
+    } else {
+        MasterPassword::from_user()?
+    };
     match MasterPasswordContainer::load(&mp) {
         Ok(_mpc) => {
             println!("Password already registered");
@@ -475,15 +499,21 @@ fn register_new_master_password() -> Result<(), TahinError> {
 }
 
 fn main() -> Result<(), TahinError> {
-    let matches = App::new("RTahin")
+    let top_matches = App::new("RTahin")
         .version("1.0")
         .author("Moritz Clasmeier <mtesseract@silverratio.net>")
         .about("Generates Service Passwords")
-        .subcommand(SubCommand::with_name("register").about("Register new Master Password"))
+        .arg(
+            Arg::with_name(TopArguments::ShowPassword.as_ref())
+                .long(TopArguments::ShowPassword.as_ref())
+                .short("s")
+                .help("Show passwords"),
+        )
+        .subcommand(SubCommand::with_name("register").about("Register new master Password"))
         .get_matches();
-    if let Some(_) = matches.subcommand_matches("register") {
-        register_new_master_password()
+    if let Some(sub_matches) = top_matches.subcommand_matches("register") {
+        register_new_master_password(&top_matches, sub_matches)
     } else {
-        default_workflow()
+        default_workflow(&top_matches)
     }
 }
