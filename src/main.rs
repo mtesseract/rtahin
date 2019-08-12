@@ -91,6 +91,24 @@ impl MasterPassword {
         Password(password.to_string())
     }
 
+    fn from_user_new() -> Result<MasterPassword, TahinError> {
+        loop {
+            let p1 = PasswordInput::new()
+                .with_prompt("Master Password")
+                .interact()?;
+            let p2 = PasswordInput::new()
+                .with_prompt("Master Password (verification)")
+                .interact()?;
+
+            if p1 == p2 {
+                return Ok(MasterPassword(p1));
+            } else {
+                println!("Mismatch, try again.");
+                continue;
+            }
+        }
+    }
+
     fn from_user() -> Result<MasterPassword, TahinError> {
         Ok(MasterPassword(
             PasswordInput::new()
@@ -478,7 +496,7 @@ fn register_new_master_password(
     let mp = if top_args.is_present(TopArguments::ShowPassword) {
         MasterPassword::from_user_cleartext()?
     } else {
-        MasterPassword::from_user()?
+        MasterPassword::from_user_new()?
     };
     match MasterPasswordContainer::load(&mp) {
         Ok(_mpc) => {
@@ -495,7 +513,9 @@ fn register_new_master_password(
         }
     }
     let mpc = MasterPasswordContainer::new(mp);
-    mpc.persist()
+    mpc.persist()?;
+    println!("OK");
+    Ok(())
 }
 
 fn main() -> Result<(), TahinError> {
