@@ -8,7 +8,7 @@ use std::process::{self, Stdio};
 
 use base64;
 use clap::{App, Arg, ArgMatches, SubCommand};
-use dialoguer::{Input, PasswordInput};
+use dialoguer::{Confirmation, Input, PasswordInput};
 use dirs::home_dir;
 use hex;
 use serde::{Deserialize, Serialize};
@@ -157,29 +157,13 @@ struct Service {
 }
 
 impl Service {
-    pub fn query(mpc: &MasterPasswordContainer) -> Result<Service, TahinError> {
-        use dialoguer::Confirmation;
-
+    pub fn query() -> Result<Service, TahinError> {
         let service_id = Input::<String>::new().with_prompt("Service").interact()?;
         let service = Service {
             id: ServiceId(service_id),
         };
 
-        if mpc.container.services.contains(&service) {
-            // Found.
-            Ok(service)
-        } else {
-            println!("Service '{}' currently unknown.", service);
-
-            if Confirmation::new()
-                .with_text("Do you want to continue?")
-                .interact()?
-            {
-                Ok(service)
-            } else {
-                process::exit(0)
-            }
-        }
+        Ok(service)
     }
 }
 
@@ -460,7 +444,17 @@ fn default_workflow(top_args: &ArgMatches<'_>) -> Result<(), TahinError> {
             }
         }
     };
-    let service = Service::query(&container)?;
+    let service = Service::query()?;
+    if !container.container.services.contains(&service) {
+        println!("Service '{}' currently unknown.", service);
+
+        if !Confirmation::new()
+            .with_text("Do you want to continue?")
+            .interact()?
+        {
+            process::exit(0)
+        }
+    }
     container.container.services.insert(service.clone());
     container.persist()?;
     let password = mp.derive_password(&service);
@@ -518,6 +512,27 @@ fn register_new_master_password(
     Ok(())
 }
 
+fn derive_once(top_args: &ArgMatches<'_>, _args: &ArgMatches<'_>) -> Result<(), TahinError> {
+    let opt_handler = PasswordHandler::from_env()?;
+    let mp = if top_args.is_present(TopArguments::ShowPassword) {
+        MasterPassword::from_user_cleartext()?
+    } else {
+        MasterPassword::from_user()?
+    };
+    let service = Service::query()?;
+    let password = mp.derive_password(&service);
+
+    match opt_handler {
+        Some(handler) => {
+            handler.send(&password)?;
+            println!("OK");
+        }
+        None => println!("{}", password.0),
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), TahinError> {
     let top_matches = App::new("RTahin")
         .version("1.0")
@@ -530,9 +545,12 @@ fn main() -> Result<(), TahinError> {
                 .help("Show passwords"),
         )
         .subcommand(SubCommand::with_name("register").about("Register new master Password"))
+        .subcommand(SubCommand::with_name("derive-once").about("Derive password once"))
         .get_matches();
     if let Some(sub_matches) = top_matches.subcommand_matches("register") {
         register_new_master_password(&top_matches, sub_matches)
+    } else if let Some(sub_matches) = top_matches.subcommand_matches("derive-once") {
+        derive_once(&top_matches, sub_matches)
     } else {
         default_workflow(&top_matches)
     }
