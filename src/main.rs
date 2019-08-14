@@ -533,6 +533,50 @@ fn derive_once(top_args: &ArgMatches<'_>, _args: &ArgMatches<'_>) -> Result<(), 
     Ok(())
 }
 
+fn derive_many(top_args: &ArgMatches<'_>, _args: &ArgMatches<'_>) -> Result<(), TahinError> {
+    let opt_handler = PasswordHandler::from_env()?;
+    let mp = if top_args.is_present(TopArguments::ShowPassword) {
+        MasterPassword::from_user_cleartext()?
+    } else {
+        MasterPassword::from_user()?
+    };
+    let mut container = match MasterPasswordContainer::load(&mp) {
+        Ok(container) => container,
+        Err(err) => {
+            use TahinError::*;
+            match err {
+                ContainerNotFound => MasterPasswordContainer::create_if_desired(&mp)?,
+                _ => Err(err)?,
+            }
+        }
+    };
+
+    loop {
+        let service = Service::query()?;
+        if !container.container.services.contains(&service) {
+            println!("Service '{}' currently unknown.", service);
+
+            if !Confirmation::new()
+                .with_text("Do you want to continue?")
+                .interact()?
+            {
+                continue;
+            }
+        }
+        container.container.services.insert(service.clone());
+        container.persist()?;
+        let password = mp.derive_password(&service);
+
+        match opt_handler {
+            Some(ref handler) => {
+                handler.send(&password)?;
+                println!("OK");
+            }
+            None => println!("{}", password.0),
+        }
+    }
+}
+
 fn main() -> Result<(), TahinError> {
     let top_matches = App::new("RTahin")
         .version("1.0")
@@ -546,11 +590,14 @@ fn main() -> Result<(), TahinError> {
         )
         .subcommand(SubCommand::with_name("register").about("Register new master Password"))
         .subcommand(SubCommand::with_name("derive-once").about("Derive password once"))
+        .subcommand(SubCommand::with_name("loop").about("Derive passwords in a loop"))
         .get_matches();
     if let Some(sub_matches) = top_matches.subcommand_matches("register") {
         register_new_master_password(&top_matches, sub_matches)
     } else if let Some(sub_matches) = top_matches.subcommand_matches("derive-once") {
         derive_once(&top_matches, sub_matches)
+    } else if let Some(sub_matches) = top_matches.subcommand_matches("loop") {
+        derive_many(&top_matches, sub_matches)
     } else {
         default_workflow(&top_matches)
     }
